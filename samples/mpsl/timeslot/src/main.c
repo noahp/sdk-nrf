@@ -65,6 +65,18 @@ static void error(void)
 	}
 }
 
+ISR_DIRECT_DECLARE(swi2_isr)
+{
+	/* Put callback info in the message queue. */
+	int err = k_msgq_put(&callback_msgq, &signal_callback_return_param.callback_action,
+						K_NO_WAIT);
+
+	if (err) {
+		error();
+	}
+	return 1;
+}
+
 static mpsl_timeslot_signal_return_param_t *mpsl_timeslot_callback(
 	mpsl_timeslot_session_id_t session_id,
 	uint32_t signal_type)
@@ -120,12 +132,11 @@ static mpsl_timeslot_signal_return_param_t *mpsl_timeslot_callback(
 		break;
 	}
 
-	/* Put callback info in the message queue. */
-	int err = k_msgq_put(&callback_msgq, &signal_type, K_NO_WAIT);
-
-	if (err) {
-		error();
-	}
+#if defined(NRF5340_XXAA_NETWORK)
+	NVIC_SetPendingIRQ(SWI2_IRQn);
+#elif defined(NRF52840_XXAA) || defined(NRF52832_XXAA) || defined(NRF52832_XXAB)
+	NVIC_SetPendingIRQ(SWI2_EGU2_IRQn);
+#endif
 
 	return p_ret_val;
 }
@@ -184,6 +195,14 @@ static void mpsl_nonpreemptible_thread(void)
 	/* Initialize to invalid session id */
 	mpsl_timeslot_session_id_t session_id = 0xFFu;
 
+#if defined(NRF5340_XXAA_NETWORK)
+	IRQ_DIRECT_CONNECT(SWI2_IRQn, 1, swi2_isr, 0);
+	irq_enable(SWI2_IRQn);
+#elif defined(NRF52840_XXAA) || defined(NRF52832_XXAA) || defined(NRF52832_XXAB)
+	IRQ_DIRECT_CONNECT(SWI2_EGU2_IRQn, 1, swi2_isr, 0);
+	irq_enable(SWI2_EGU2_IRQn);
+#endif
+
 	while (1) {
 		if (k_msgq_get(&mpsl_api_msgq, &api_call, K_FOREVER) == 0) {
 			switch (api_call) {
@@ -219,26 +238,21 @@ static void mpsl_nonpreemptible_thread(void)
 
 static void console_print_thread(void)
 {
-	uint32_t signal_type = 0;
+	uint32_t signal_action = 0;
 
 	while (1) {
-		if (k_msgq_get(&callback_msgq, &signal_type, K_FOREVER) == 0) {
-			switch (signal_type) {
-			case MPSL_TIMESLOT_SIGNAL_START:
+		if (k_msgq_get(&callback_msgq, &signal_action, K_FOREVER) == 0) {
+			switch (signal_action) {
+			case MPSL_TIMESLOT_SIGNAL_ACTION_NONE:
 				printk("Callback: Timeslot start\n");
 				break;
-			case MPSL_TIMESLOT_SIGNAL_TIMER0:
+			case MPSL_TIMESLOT_SIGNAL_ACTION_REQUEST:
+			case MPSL_TIMESLOT_SIGNAL_ACTION_END:
 				printk("Callback: Timer0 signal\n");
-				break;
-			case MPSL_TIMESLOT_SIGNAL_SESSION_IDLE:
-				printk("Callback: Session idle\n");
-				break;
-			case MPSL_TIMESLOT_SIGNAL_SESSION_CLOSED:
-				printk("Callback: Session closed\n");
 				break;
 			default:
 				printk("Callback: Other signal: %d\n",
-				       signal_type);
+				       signal_action);
 				break;
 			}
 		}

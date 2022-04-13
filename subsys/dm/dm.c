@@ -117,6 +117,13 @@ static mpsl_timeslot_request_t timeslot_request_normal = {
 
 struct dm_result result;
 static mpsl_timeslot_signal_return_param_t signal_callback_return_param;
+static enum dm_call m_dm_api_call;
+
+ISR_DIRECT_DECLARE(swi2_isr)
+{
+	k_msgq_put(&dm_api_msgq, &m_dm_api_call, K_NO_WAIT);
+	return 1;
+}
 
 static int dm_configure(void)
 {
@@ -150,7 +157,6 @@ static mpsl_timeslot_signal_return_param_t *mpsl_timeslot_callback(
 	ARG_UNUSED(session_id);
 	mpsl_timeslot_signal_return_param_t *p_ret_val = NULL;
 	nrf_dm_status_t nrf_dm_status;
-	enum dm_call dm_api_call;
 
 	switch (signal_type) {
 	case MPSL_TIMESLOT_SIGNAL_START:
@@ -179,18 +185,25 @@ static mpsl_timeslot_signal_return_param_t *mpsl_timeslot_callback(
 		break;
 	case MPSL_TIMESLOT_SIGNAL_SESSION_IDLE:
 		if (atomic_get(&timeslot_ctx.state) == TIMESLOT_STATE_EARLY_PENDING) {
-			dm_api_call = TIMESLOT_EARLY_END;
+			m_dm_api_call = TIMESLOT_EARLY_END;
 		} else {
-			dm_api_call = TIMESLOT_NORMAL_END;
+			m_dm_api_call = TIMESLOT_NORMAL_END;
 		}
-
-		k_msgq_put(&dm_api_msgq, &dm_api_call, K_NO_WAIT);
+#if defined(NRF5340_XXAA_NETWORK)
+		NVIC_SetPendingIRQ(SWI2_IRQn);
+#else
+		NVIC_SetPendingIRQ(SWI2_EGU2_IRQn);
+#endif
 		break;
 	case MPSL_TIMESLOT_SIGNAL_BLOCKED:
 	case MPSL_TIMESLOT_SIGNAL_CANCELLED:
 	case MPSL_TIMESLOT_SIGNAL_INVALID_RETURN:
-		dm_api_call = TIMESLOT_RESCHEDULE;
-		k_msgq_put(&dm_api_msgq, &dm_api_call, K_NO_WAIT);
+		m_dm_api_call = TIMESLOT_RESCHEDULE;
+#if defined(NRF5340_XXAA_NETWORK)
+		NVIC_SetPendingIRQ(SWI2_IRQn);
+#else
+		NVIC_SetPendingIRQ(SWI2_EGU2_IRQn);
+#endif
 		break;
 	default:
 		break;
@@ -207,6 +220,14 @@ static void mpsl_nonpreemptible_thread(void)
 
 	/* Initialize to invalid session id */
 	mpsl_timeslot_session_id_t session_id = 0xFFu;
+
+#if defined(NRF5340_XXAA_NETWORK)
+	IRQ_DIRECT_CONNECT(SWI2_IRQn, 1, swi2_isr, 0);
+	irq_enable(SWI2_IRQn);
+#else
+	IRQ_DIRECT_CONNECT(SWI2_EGU2_IRQn, 1, swi2_isr, 0);
+	irq_enable(SWI2_EGU2_IRQn);
+#endif
 
 	while (1) {
 		if (k_msgq_get(&mpsl_api_msgq, &api_call, K_FOREVER) == 0) {
