@@ -56,12 +56,18 @@ BUILD_ASSERT(sizeof(CONFIG_MEMFAULT_NCS_FW_VERSION_STATIC) > 1,
 	static char device_serial[CONFIG_MEMFAULT_NCS_DEVICE_ID_MAX_LEN + 1];
 #endif
 
+/* Hardware version check */
+BUILD_ASSERT(sizeof(CONFIG_MEMFAULT_NCS_HW_VERSION) > 1, "Hardware version must be configured");
+
 extern void memfault_ncs_metrcics_init(void);
 
 sMfltHttpClientConfig g_mflt_http_client_config = {
 	.api_key = CONFIG_MEMFAULT_NCS_PROJECT_KEY,
 };
 
+/* Define this function as weak, so the end user can override if necessary
+without patching the sdk */
+__weak
 void memfault_platform_get_device_info(sMemfaultDeviceInfo *info)
 {
 #if defined(CONFIG_MEMFAULT_NCS_FW_VERSION_AUTO)
