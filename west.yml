@@ -147,9 +147,12 @@ manifest:
       path: modules/tee/tf-m/trusted-firmware-m
       revision: v1.8.0-ncs1-2
     - name: matter
-      repo-path: sdk-connectedhomeip
+      # repo-path: sdk-connectedhomeip
+      # path: modules/lib/matter
+      # revision: v2.5.2
+      url: https://github.com/noahp/sdk-connectedhomeip
       path: modules/lib/matter
-      revision: v2.5.2
+      revision: noahp/v2.5.2-fix
       submodules:
         - name: nlio
           path: third_party/nlio/repo
