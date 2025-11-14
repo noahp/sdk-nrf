@@ -19,7 +19,7 @@
 #include <psa/crypto.h>
 #include <psa/crypto_extra.h>
 
-#if defined(CONFIG_BOARD_NATIVE_SIM)
+#if !defined(CONFIG_NRF_SECURITY)
 #define IAK_APPLICATION_GEN1 0x41020100
 #else
 #include <psa/nrf_platform_key_ids.h>

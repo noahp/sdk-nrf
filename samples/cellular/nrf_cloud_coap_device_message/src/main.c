@@ -5,12 +5,8 @@
  */
 
 #include <zephyr/kernel.h>
-#include <modem/nrf_modem_lib.h>
-#include <nrf_modem_at.h>
-#include <modem/modem_info.h>
 #include <zephyr/settings/settings.h>
 #include <zephyr/net/conn_mgr_connectivity.h>
-#include <helpers/nrfx_reset_reason.h>
 #include <net/nrf_cloud.h>
 #include <net/nrf_cloud_log.h>
 #include <net/nrf_cloud_alert.h>
@@ -21,14 +17,10 @@
 #include <date_time.h>
 #include <zephyr/random/random.h>
 #include <app_version.h>
-#include <dk_buttons_and_leds.h>
+#include <time.h>
 
 LOG_MODULE_REGISTER(nrf_cloud_coap_device_message,
 		    CONFIG_NRF_CLOUD_COAP_DEVICE_MESSAGE_SAMPLE_LOG_LEVEL);
-
-/* Button number to send BUTTON event device message */
-#define LTE_LED_NUM	DK_LED1
-#define SEND_LED_NUM	DK_LED2
 
 /* Boot message */
 #define SAMPLE_SIGNON_FMT "nRF Cloud CoAP Device Message Sample, version: %s"
@@ -42,10 +34,6 @@ LOG_MODULE_REGISTER(nrf_cloud_coap_device_message,
 /* Network states */
 #define NETWORK_UP		  BIT(0)
 #define EVENT_MASK		  (NET_EVENT_L4_CONNECTED | NET_EVENT_L4_DISCONNECTED)
-
-/* Event to indicate a button has been pressed */
-static K_EVENT_DEFINE(button_press_event);
-#define BUTTON_PRESSED BIT(0)
 
 /* Connection event */
 static K_EVENT_DEFINE(connection_events);
@@ -97,19 +85,9 @@ static void await_credentials(void)
 	LOG_INF("nRF Cloud credentials detected!");
 }
 
-static void button_handler(uint32_t button_states, uint32_t has_changed)
-{
-	if (has_changed & button_states & DK_BTN1_MSK) {
-		k_event_post(&button_press_event, BUTTON_PRESSED);
-	}
-}
-
 static int send_message(const char *const msg)
 {
 	int ret = 0;
-
-	/* Turn the SEND LED on for a bit */
-	dk_set_led(SEND_LED_NUM, 1);
 
 	LOG_INF("Sending message:'%s'", msg);
 
@@ -121,44 +99,13 @@ static int send_message(const char *const msg)
 		LOG_INF("Message sent");
 	}
 
-	/* Keep that LED on for at least 100ms */
-	k_sleep(K_MSEC(100));
-
-	/* Turn the LED back off */
-	dk_set_led(SEND_LED_NUM, 0);
-
 	return ret;
-}
-
-static void send_message_on_button(void)
-{
-	static unsigned int count;
-
-	/* Wait for a button press */
-	k_event_wait(&button_press_event, BUTTON_PRESSED, true, K_FOREVER);
-
-	(void)send_message("{\"appId\":\"BUTTON\", \"messageType\":\"DATA\", \"data\":\"1\"}");
-
-	(void)nrf_cloud_log_send(LOG_LEVEL_INF, "Button pressed %u times", ++count);
-}
-
-static void print_reset_reason(void)
-{
-	int reset_reason = 0;
-
-	reset_reason = nrfx_reset_reason_get();
-	LOG_INF("Reset reason: 0x%x", reset_reason);
 }
 
 static void report_startup(void)
 {
 	int err = 0;
 	int reset_reason = 0;
-
-
-	reset_reason = nrfx_reset_reason_get();
-	nrfx_reset_reason_clear(reset_reason);
-	LOG_INF("Reset reason: 0x%x", reset_reason);
 
 	err = nrf_cloud_alert_send(ALERT_TYPE_DEVICE_NOW_ONLINE,
 				   reset_reason, NULL);
@@ -183,8 +130,8 @@ static int send_hello_world_msg(void)
 	char buf[SAMPLE_MSG_BUF_SIZE];
 
 	/* Get the current timestamp */
-	err = date_time_now(&time_now);
-	if (err) {
+	time_now = (int64_t)time(NULL);
+	if (time_now <= 0) {
 		LOG_ERR("Failed to get timestamp, using random number");
 		sys_rand_get(&time_now, sizeof(time_now));
 	}
@@ -204,25 +151,6 @@ static int send_hello_world_msg(void)
 	}
 
 	return err;
-}
-
-static void modem_time_wait(void)
-{
-	int err = 0;
-	char time_buf[64];
-
-	LOG_INF("Waiting for modem to acquire network time...");
-
-	do {
-		k_sleep(K_SECONDS(3));
-
-		err = nrf_modem_at_cmd(time_buf, sizeof(time_buf), "AT%%CCLK?");
-		if (err) {
-			LOG_DBG("AT Clock Command Error %d... Retrying in 3 seconds.", err);
-		}
-	} while (err != 0);
-
-	LOG_INF("Network time obtained");
 }
 
 
@@ -403,36 +331,43 @@ exit:
 	}
 }
 
+static void await_ntp_sync(void)
+{
+	int err = 1;
+
+	LOG_INF("Waiting for NTP time synchronization...");
+
+	/* dumb as hell, just poll until we get rt offset that seems reasonable */
+	int wait_limit = 100;
+	while(wait_limit-- > 0) {
+		struct timespec tp;
+		sys_clock_getrtoffset(&tp);
+		if (tp.tv_sec > 100000) {
+			err = 0;
+			break;
+		}
+	}
+	if (err) {
+		LOG_ERR("NTP time synchronization didn't happen within timeout");
+	} else {
+		LOG_INF("NTP time synchronized!");
+		/* log current broken down time, iso 8601 */
+		struct tm cur_time;
+		time_t now;
+		time(&now);
+		gmtime_r(&now, &cur_time);
+		LOG_INF("Current time: %04d-%02d-%02dT%02d:%02d:%02dZ",
+			cur_time.tm_year + 1900, cur_time.tm_mon + 1,
+			cur_time.tm_mday, cur_time.tm_hour,
+			cur_time.tm_min, cur_time.tm_sec);
+	}
+}
+
 static int setup(void)
 {
 	int err = 0;
 
-	print_reset_reason();
-
-	err = dk_leds_init();
-	if (err) {
-		LOG_ERR("LEDs init failed (err %d)\n", err);
-		return 0;
-	}
-
-	err = dk_buttons_init(button_handler);
-	if (err) {
-		LOG_ERR("dk_buttons_init, error: %d", err);
-	}
-
-	/* Set the LEDs off after all modules are ready */
-	err = dk_set_leds(0);
-	if (err) {
-		LOG_ERR("Failed to set LEDs off");
-		return err;
-	}
-
-	/* Init modem */
-	err = nrf_modem_lib_init();
-	if (err) {
-		LOG_ERR("Failed to initialize modem library: 0x%X", err);
-		return -EFAULT;
-	}
+	/* todo- initialize wifi? */
 
 	/* Ensure device has credentials installed before proceeding */
 	await_credentials();
@@ -450,7 +385,7 @@ static int setup(void)
 	k_event_wait(&connection_events, NETWORK_UP, false, K_FOREVER);
 
 	/* Wait until we know what time it is (necessary for JSON Web Token generation) */
-	modem_time_wait();
+	await_ntp_sync();
 
 	/* nRF Cloud CoAP requires login */
 	err = nrf_cloud_coap_init();
@@ -464,7 +399,7 @@ static int setup(void)
 		return 0;
 	}
 
-    /* Initialize the nRF Cloud logging subsystem */
+	/* Initialize the nRF Cloud logging subsystem */
 	nrf_cloud_log_init();
 
 	check_desired_log_level();
@@ -483,14 +418,12 @@ static void l4_event_handler(struct net_mgmt_event_callback *cb, uint64_t event,
 
 	if (event == NET_EVENT_L4_CONNECTED) {
 		/* Mark network as up. */
-		dk_set_led(LTE_LED_NUM, 1);
-		LOG_INF("Connected to LTE");
+		LOG_INF("Connected to network");
 		k_event_post(&connection_events, NETWORK_UP);
 	}
 
 	if (event == NET_EVENT_L4_DISCONNECTED) {
 		/* Mark network as down. */
-		dk_set_led(LTE_LED_NUM, 0);
 		LOG_INF("Network connectivity lost!");
 	}
 }
@@ -506,11 +439,49 @@ static int prepare_network_tracking(void)
 
 SYS_INIT(prepare_network_tracking, APPLICATION, 0);
 
+static void prv_send_test_message(void) {
+	static unsigned int count = 0;
+	const char *msg_fmt = "{\"appId\":\"BUTTON\", \"messageType\":\"DATA\", \"data\":\"%d\"}";
+	char msg_buf[100];
+	int err = snprintk(msg_buf, sizeof(msg_buf), msg_fmt, count);
+	if (err < 0 || err >= sizeof(msg_buf)) {
+		LOG_ERR("Failed to create test message");
+		return;
+	}
+	(void)send_message(msg_buf);
+
+	(void)nrf_cloud_log_send(LOG_LEVEL_INF, "Button pressed %u times", ++count);
+}
+
+
+#include <zephyr/shell/shell.h>
+#include "jwt_impl.h"
+
+static int cmd_send_test_msg(const struct shell *shell, size_t argc, char **argv)
+{
+	prv_send_test_message();
+	return 0;
+}
+
+SHELL_STATIC_SUBCMD_SET_CREATE(sample_cmds,
+	SHELL_CMD(test_msg, NULL, "Send test message to nRF Cloud", cmd_send_test_msg),
+	SHELL_SUBCMD_SET_END
+);
+
+SHELL_CMD_REGISTER(sample, &sample_cmds, "Sample commands", NULL);
+#include "banner.h"
+void prv_print_banner(void)
+{
+	printk(banner);
+}
+
 int main(void)
 {
 	int err = 0;
 
 	LOG_INF(SAMPLE_SIGNON_FMT, APP_VERSION_STRING);
+
+	prv_print_banner();
 
 	err = setup();
 	if (err) {
@@ -523,8 +494,6 @@ int main(void)
 
 	err = send_hello_world_msg();
 
-	while (1) {
-		send_message_on_button();
-		check_desired_log_level();
-	}
+	/* Sleep forever */
+	k_sleep(K_FOREVER);
 }
