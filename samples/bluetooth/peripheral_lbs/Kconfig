@@ -8,6 +8,26 @@ source "Kconfig.zephyr"
 
 menu "Nordic LED-Button BLE GATT service sample"
 
+config MEMFAULT_EVENT_NOTIFY_INTERVAL_SECONDS
+	int "Memfault event notification interval"
+	default 10
+	help
+	  Interval, in seconds, at which the sample notifies a CBOR-encoded
+	  Memfault event over the Memfault Event Service. The event is also
+	  sent immediately whenever the user button is pressed or released.
+
+config MEMFAULT_SOFTWARE_TYPE
+	string "Software type embedded in the Memfault event payload"
+	default "peripheral_lbs"
+
+config MEMFAULT_SOFTWARE_VERSION
+	string "Software version embedded in the Memfault event payload"
+	default "1.0.0"
+
+config MEMFAULT_HARDWARE_VERSION
+	string "Hardware version embedded in the Memfault event payload"
+	default BOARD_TARGET
+
 config BT_LBS_SECURITY_ENABLED
 	bool "Enable security"
 	default y

@@ -43,6 +43,31 @@ You can use the sample to transmit the button state from your development kit to
 
 You can also use this sample to control the color of the RGB LED on the nRF52840 Dongle or Thingy:53.
 
+Memfault event relay
+=====================
+
+The sample also demonstrates how to stream device metrics from a Bluetooth LE peripheral to `Memfault <https://memfault.com>`_ using the Memfault `Ingress events API <https://api-docs.memfault.com/#7267d576-ee78-4d1c-b7a3-8fc4dd82ce04>`_.
+
+The device exposes a **Memfault Event Service** with a single notifiable **Memfault Event Data** characteristic.
+Every :kconfig:option:`CONFIG_MEMFAULT_EVENT_NOTIFY_INTERVAL_SECONDS` seconds, and immediately whenever the user button is pressed or released, the sample encodes the following data as a `CBOR <https://cbor.io/>`_ map and sends it as a notification:
+
+* ``device_serial`` - Device serial, derived from the device's Bluetooth LE MAC address.
+* ``software_type`` - Software type, set by :kconfig:option:`CONFIG_MEMFAULT_SOFTWARE_TYPE`.
+* ``software_version`` - Software version, set by :kconfig:option:`CONFIG_MEMFAULT_SOFTWARE_VERSION`.
+* ``hardware_version`` - Hardware version, set by :kconfig:option:`CONFIG_MEMFAULT_HARDWARE_VERSION` (defaults to the board target).
+* ``uptime_s`` - Seconds since boot.
+* ``button`` - Current state of the user button.
+* ``button_presses`` - Number of button presses since boot.
+* ``batt_mv`` - Simulated battery voltage, in millivolts (there is no fuel gauge on the DK, so this is a synthetic value included to demonstrate a metric that changes over time).
+
+The device identity fields (``device_serial``, ``software_type``, ``software_version``, and ``hardware_version``) are included in every payload to simulate a self-describing custom data package coming from a downstream device whose identity is otherwise unknown to the host.
+
+Including them makes the CBOR map large enough that it does not reliably fit in a single notification: a GATT notification cannot exceed the connection's negotiated ATT MTU, and plenty of BLE centrals stay at, or cap out not far above, the 23-byte default regardless of what the sample requests.
+To work around this, the sample raises :kconfig:option:`CONFIG_BT_L2CAP_TX_MTU` to ``247`` and asks the central for a larger MTU on connect, but does not depend on that request succeeding: every event is split into as many notifications as the negotiated MTU requires, each prefixed with a 1-byte header (bits 0-6: 0-based fragment index, bit 7: set on the last fragment).
+
+The :file:`scripts/memfault_ble_relay.py` host-side Python script connects to the device over Bluetooth LE, subscribes to these notifications, reassembles the fragments and decodes the CBOR payload, and forwards each event as a ``heartbeat`` event to the Memfault events API, reading the device identity straight out of the payload.
+See `Relaying events to Memfault`_ for usage instructions.
+
 User interface
 **************
 
@@ -129,6 +154,9 @@ For example, when building on the command line, you can add the option as follow
 
    west build samples/bluetooth/peripheral_lbs -- -DFILE_SUFFIX=minimal
 
+.. note::
+   The minimal build's reduced Bluetooth buffer configuration does not raise the ATT MTU, so the Memfault event (see `Memfault event relay`_) is split into more, smaller fragments in this build than in the default configuration. This does not prevent it from working.
+
 .. _peripheral_lbs_testing:
 
 Testing
@@ -210,6 +238,28 @@ After programming the sample to your dongle or development kit, one of the LEDs 
 
       To test the sample using the nRF Blinky mobile app, see the `nRF Blinky documentation`_.
 
+.. _peripheral_lbs_memfault_relay:
+
+Relaying events to Memfault
+============================
+
+To forward the Memfault CBOR events (see `Memfault event relay`_) from the device to your Memfault project, complete the following steps on a PC with a Bluetooth LE adapter:
+
+1. Install `uv <https://docs.astral.sh/uv/getting-started/installation/>`_, if you do not already have it.
+   The relay script declares its dependencies (``bleak``, ``cbor2``, ``requests``) as `inline script metadata <https://packaging.python.org/en/latest/specifications/inline-script-metadata/>`_, so ``uv`` installs them automatically into an ephemeral environment - no virtual environment or requirements file needed.
+#. Get your Memfault project key, available under :guilabel:`Settings > General` in the Memfault web app.
+#. Program the sample to your development kit and let it advertise.
+#. Run the relay script, adjusting the arguments to match your project key and device name:
+
+   .. code-block:: console
+
+      uv run samples/bluetooth/peripheral_lbs/scripts/memfault_ble_relay.py \
+        --project-key <your-memfault-project-key> \
+        --device-name Nordic_LBS
+
+   The script scans for the device, connects, and subscribes to the Memfault Event Data characteristic.
+   Each notification is decoded, and its ``device_serial``, ``software_type``, ``software_version``, and ``hardware_version`` fields are used as-is to build a ``heartbeat`` event, which is posted to the Memfault events API with the Bluetooth LE RSSI observed during the connection scan added as the ``rssi_dbm`` metric.
+#. Open your project in the Memfault web app and check the device's **Metrics** page to see the ``batt_v``, ``rssi_dbm``, ``button_presses``, and ``uptime_s`` values reported by the sample.
 
 Dependencies
 ************
@@ -233,6 +283,8 @@ In addition, it uses the following Zephyr libraries:
   * :file:`include/bluetooth/conn.h`
   * :file:`include/bluetooth/uuid.h`
   * :file:`include/bluetooth/gatt.h`
+
+It also uses `zcbor <https://github.com/NordicSemiconductor/zcbor>`_ to encode the Memfault events, and the :file:`lib/hw_id` library to derive the simulated Memfault device serial from the Bluetooth LE MAC address (see `Memfault event relay`_).
 
 The sample also uses the following secure firmware component:
 
