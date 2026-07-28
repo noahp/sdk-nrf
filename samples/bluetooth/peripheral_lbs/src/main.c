@@ -40,6 +40,7 @@
 
 static bool app_button_state;
 static struct k_work adv_work;
+static uint8_t conn_count;
 
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
@@ -76,14 +77,25 @@ static void connected(struct bt_conn *conn, uint8_t err)
 
 	printk("Connected\n");
 
+	conn_count++;
 	dk_set_led_on(CON_STATUS_LED);
+
+	if (conn_count < CONFIG_BT_MAX_CONN) {
+		/* Controller stops advertising on connect; resume so
+		 * additional centrals can still connect.
+		 */
+		advertising_start();
+	}
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	printk("Disconnected, reason 0x%02x %s\n", reason, bt_hci_err_to_str(reason));
 
-	dk_set_led_off(CON_STATUS_LED);
+	conn_count--;
+	if (conn_count == 0) {
+		dk_set_led_off(CON_STATUS_LED);
+	}
 }
 
 static void recycled_cb(void)
