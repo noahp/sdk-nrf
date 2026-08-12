@@ -1,0 +1,21 @@
+/*
+ * PoC: carve the last 32 bytes off the app/net shared IPC memory region
+ * (sram0_shared, 0x20070000-0x2007FFFF) for a small cross-core "postmortem"
+ * struct (see nrf/include/net_core_postmortem.h). Applied identically here
+ * and in the app-core sample's overlay-postmortem-poc.overlay so both cores
+ * agree on the split — it's the same physical SRAM either way.
+ *
+ * ipc0's memory-region still points at &sram0_shared, so shrinking its reg
+ * here automatically shrinks the RPMSG vring/shm layout to fit; no other
+ * Kconfig changes needed.
+ */
+
+&sram0_shared {
+	reg = <0x20070000 0xffe0>;
+};
+
+&{/reserved-memory} {
+	net_core_postmortem: memory@2007ffe0 {
+		reg = <0x2007ffe0 0x20>;
+	};
+};

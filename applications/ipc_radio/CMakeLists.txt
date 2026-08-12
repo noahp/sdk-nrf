@@ -24,3 +24,5 @@ target_sources(app PRIVATE
   src/main.c
 )
 # NORDIC SDK APP END
+
+target_sources_ifdef(CONFIG_NET_CORE_MONITOR app PRIVATE src/postmortem.c)

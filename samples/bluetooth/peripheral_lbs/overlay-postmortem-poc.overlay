@@ -1,0 +1,16 @@
+/*
+ * PoC: app-core side of the same shared-memory split as
+ * nrf/applications/ipc_radio/overlay-vs-fatal-error-poc.overlay. Must match
+ * exactly — both cores are describing the same physical SRAM
+ * (0x20070000-0x2007FFFF), just from their own devicetree.
+ */
+
+&sram0_shared {
+	reg = <0x20070000 0xffe0>;
+};
+
+&{/reserved-memory} {
+	net_core_postmortem: memory@2007ffe0 {
+		reg = <0x2007ffe0 0x20>;
+	};
+};

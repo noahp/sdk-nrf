@@ -14,3 +14,5 @@ target_sources(app PRIVATE
 )
 
 # NORDIC SDK APP END
+
+target_sources_ifdef(CONFIG_NET_CORE_MONITOR app PRIVATE src/postmortem_monitor.c)
