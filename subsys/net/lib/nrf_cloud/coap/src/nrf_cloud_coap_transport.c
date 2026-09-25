@@ -74,6 +74,17 @@ static K_MUTEX_DEFINE(internal_transfer_mut);
 
 static struct nrf_cloud_coap_client internal_cc = {0};
 
+/* PDN ID to bind the internal client's socket to; 0 is the primary/default PDN. Applied by
+ * nrf_cloud_coap_connect_host_cb() when the socket is created, so it must be set (via
+ * nrf_cloud_coap_pdn_id_set()) before nrf_cloud_coap_connect() is called.
+ */
+static int nrf_cloud_coap_pdn_id;
+
+void nrf_cloud_coap_pdn_id_set(int pdn_id)
+{
+	nrf_cloud_coap_pdn_id = pdn_id;
+}
+
 #if defined(CONFIG_NRF_CLOUD_COAP_LOG_LEVEL_DBG)
 static const char *const coap_method_str[] = {
 	NULL,		/* 0 */
@@ -840,6 +851,16 @@ static int nrf_cloud_coap_connect_host_cb(struct sockaddr *const addr)
 	}
 
 	LOG_DBG("sock = %d", sock);
+
+	if (nrf_cloud_coap_pdn_id > 0) {
+		err = zsock_setsockopt(sock, SOL_SOCKET, SO_BINDTOPDN, &nrf_cloud_coap_pdn_id,
+				       sizeof(nrf_cloud_coap_pdn_id));
+		if (err < 0) {
+			LOG_ERR("zsock_setsockopt(%d) error: %d", SO_BINDTOPDN, -errno);
+			err = -errno;
+			goto out;
+		}
+	}
 
 	err = nrfc_dtls_setup(sock);
 	if (err < 0) {

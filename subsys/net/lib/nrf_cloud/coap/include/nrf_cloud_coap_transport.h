@@ -48,6 +48,13 @@ struct nrf_cloud_coap_client {
  */
 int nrf_cloud_coap_transport_init(struct nrf_cloud_coap_client *const client);
 
+/**@brief Set the PDN ID the internal client's socket is bound to (SO_BINDTOPDN), for the next
+ * time it is (re)connected.
+ *
+ * @param pdn_id PDN ID, or 0 for the primary/default PDN (the previous, fixed behavior).
+ */
+void nrf_cloud_coap_pdn_id_set(int pdn_id);
+
 /**@brief Connect to the cloud.
  *
  * @param client Client to connect.
